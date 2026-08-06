@@ -41,6 +41,8 @@ logger = logging.getLogger(__name__)
 
 _S3_BUCKET = os.environ.get("S3_BUCKET_NAME")
 _s3_client = boto3.client("s3") if _S3_BUCKET else None
+if _s3_client is None:
+    logger.warning("S3_BUCKET_NAME not set; FAISS indexes will not persist across pod restarts")
 
 
 def _s3_prefix(thread_id: str) -> str:
@@ -63,7 +65,7 @@ def _upload_index_to_s3(thread_id: str, local_dir: str, metadata: dict) -> None:
     )
 
 
-def _download_index_from_s3(thread_id: str):
+def _download_index_from_s3(thread_id: str) -> tuple[Optional[Any], dict]:
     """Download and load a FAISS index from S3, or return (None, None) if absent."""
     if _s3_client is None:
         return None, None
@@ -77,22 +79,19 @@ def _download_index_from_s3(thread_id: str):
         return None, None
 
     with tempfile.TemporaryDirectory() as tmp_dir:
-        metadata = {}
-        for obj in objects["Contents"]:
-            key = obj["Key"]
-            filename = key[len(prefix):]
-            if not filename:
-                continue
-            local_path = os.path.join(tmp_dir, filename)
-            _s3_client.download_file(_S3_BUCKET, key, local_path)
-            if filename == "metadata.json":
-                with open(local_path, "r", encoding="utf-8") as f:
-                    metadata = json.load(f)
-
-        if "metadata.json" in os.listdir(tmp_dir):
-            os.remove(os.path.join(tmp_dir, "metadata.json"))
-
         try:
+            metadata = {}
+            for obj in objects["Contents"]:
+                key = obj["Key"]
+                filename = key[len(prefix):]
+                if not filename:
+                    continue
+                local_path = os.path.join(tmp_dir, filename)
+                _s3_client.download_file(_S3_BUCKET, key, local_path)
+                if filename == "metadata.json":
+                    with open(local_path, "r", encoding="utf-8") as f:
+                        metadata = json.load(f)
+
             vector_store = FAISS.load_local(
                 tmp_dir, embeddings, allow_dangerous_deserialization=True
             )
