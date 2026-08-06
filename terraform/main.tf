@@ -1,38 +1,40 @@
 terraform {
+  required_version = ">= 1.5.7"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = ">= 6.52"
+    }
+    tls = {
+      source  = "hashicorp/tls"
+      version = ">= 4.0"
     }
   }
 }
 
 provider "aws" {
-  region = var.aws_region
+  region  = var.aws_region
+  profile = "chatbot-personal"
 }
 
 # ── IRSA: IAM role for the chatbot pod ────────────────────────────────────────
 data "aws_caller_identity" "current" {}
-
-locals {
-  oidc_provider = replace(var.cluster_oidc_issuer_url, "https://", "")
-}
 
 data "aws_iam_policy_document" "chatbot_assume_role" {
   statement {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/${local.oidc_provider}"]
+      identifiers = [module.eks.oidc_provider_arn]
     }
     condition {
       test     = "StringEquals"
-      variable = "${local.oidc_provider}:sub"
+      variable = "${module.eks.oidc_provider}:sub"
       values   = ["system:serviceaccount:chatbot:chatbot-sa"]
     }
     condition {
       test     = "StringEquals"
-      variable = "${local.oidc_provider}:aud"
+      variable = "${module.eks.oidc_provider}:aud"
       values   = ["sts.amazonaws.com"]
     }
   }
@@ -69,19 +71,19 @@ resource "aws_iam_role_policy_attachment" "chatbot_secrets" {
 # ── RDS PostgreSQL ─────────────────────────────────────────────────────────────
 resource "aws_db_subnet_group" "chatbot" {
   name       = "chatbot-db-subnet-group"
-  subnet_ids = var.db_subnet_ids
+  subnet_ids = module.vpc.private_subnets
 }
 
 resource "aws_security_group" "rds" {
   name        = "chatbot-rds-sg"
   description = "Allow Postgres from EKS nodes only"
-  vpc_id      = var.vpc_id
+  vpc_id      = module.vpc.vpc_id
 
   ingress {
     from_port       = 5432
     to_port         = 5432
     protocol        = "tcp"
-    security_groups = [var.eks_node_security_group_id]
+    security_groups = [module.eks.node_security_group_id]
   }
 
   egress {
@@ -106,7 +108,7 @@ resource "aws_db_instance" "chatbot" {
   skip_final_snapshot    = false
   deletion_protection    = true
   storage_encrypted      = true
-  multi_az               = false   # set true for production HA
+  multi_az               = false # set true for production HA
 }
 
 # ── Secrets Manager: store DB URL after RDS is created ────────────────────────
@@ -115,6 +117,6 @@ resource "aws_secretsmanager_secret" "db_url" {
 }
 
 resource "aws_secretsmanager_secret_version" "db_url" {
-  secret_id = aws_secretsmanager_secret.db_url.id
+  secret_id     = aws_secretsmanager_secret.db_url.id
   secret_string = "postgresql://chatbot:${var.db_password}@${aws_db_instance.chatbot.endpoint}/chatbot"
 }
