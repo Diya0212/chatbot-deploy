@@ -1,0 +1,22 @@
+# ArgoCD Application — point this at your git repo
+# Apply once: kubectl apply -f argocd-app.yaml -n argocd
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: chatbot
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/<your-org>/chatbot-deploy.git   # replace
+    targetRevision: main
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: chatbot
+  syncPolicy:
+    automated:
+      prune: true       # removes resources deleted from git
+      selfHeal: true    # reverts manual kubectl changes
+    syncOptions:
+      - CreateNamespace=true

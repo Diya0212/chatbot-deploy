@@ -1,0 +1,59 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: chatbot
+  namespace: chatbot
+  labels:
+    app: chatbot
+spec:
+  replicas: 2          # safe to scale now — PostgreSQL handles concurrent writes
+  selector:
+    matchLabels:
+      app: chatbot
+  template:
+    metadata:
+      labels:
+        app: chatbot
+    spec:
+      serviceAccountName: chatbot-sa   # IRSA — pod inherits IAM role for Secrets Manager access
+
+      containers:
+        - name: chatbot
+          image: <your-ecr-account-id>.dkr.ecr.<region>.amazonaws.com/chatbot:latest
+          ports:
+            - containerPort: 8501
+          envFrom:
+            # Populated by SecretProviderClass once the CSI volume is mounted
+            - secretRef:
+                name: chatbot-app-secrets
+          resources:
+            requests:
+              cpu: "500m"
+              memory: "1Gi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          volumeMounts:
+            - name: secrets-store
+              mountPath: /mnt/secrets
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 30
+            periodSeconds: 20
+
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: chatbot-secrets

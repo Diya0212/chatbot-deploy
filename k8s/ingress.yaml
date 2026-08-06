@@ -1,0 +1,29 @@
+# Requires AWS Load Balancer Controller installed on the cluster
+# Sticky sessions are REQUIRED for Streamlit WebSocket connections
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chatbot-ingress
+  namespace: chatbot
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    # Sticky sessions — without this Streamlit WebSocket breaks on multi-pod setups
+    alb.ingress.kubernetes.io/target-group-attributes: stickiness.enabled=true,stickiness.lb_cookie.duration_seconds=86400
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: "443"
+    # Replace with your ACM certificate ARN
+    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:<region>:<account-id>:certificate/<cert-id>
+spec:
+  rules:
+    - host: chatbot.yourdomain.com   # replace with your domain
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: chatbot-svc
+                port:
+                  number: 80
