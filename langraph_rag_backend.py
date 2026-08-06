@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
+import json
 from typing import Annotated, Any, Dict, Optional, TypedDict
 
 from dotenv import load_dotenv
@@ -19,6 +21,7 @@ from langgraph.graph import START, StateGraph
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode, tools_condition
 import requests
+import boto3
 
 load_dotenv()
 
@@ -34,12 +37,88 @@ embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-
 _THREAD_RETRIEVERS: Dict[str, Any] = {}
 _THREAD_METADATA: Dict[str, dict] = {}
 
+logger = logging.getLogger(__name__)
+
+_S3_BUCKET = os.environ.get("S3_BUCKET_NAME")
+_s3_client = boto3.client("s3") if _S3_BUCKET else None
+
+
+def _s3_prefix(thread_id: str) -> str:
+    return f"threads/{thread_id}/"
+
+
+def _upload_index_to_s3(thread_id: str, local_dir: str, metadata: dict) -> None:
+    """Upload a saved FAISS index directory and its metadata sidecar to S3."""
+    if _s3_client is None:
+        return
+    prefix = _s3_prefix(thread_id)
+    for filename in os.listdir(local_dir):
+        _s3_client.upload_file(
+            os.path.join(local_dir, filename), _S3_BUCKET, prefix + filename
+        )
+    _s3_client.put_object(
+        Bucket=_S3_BUCKET,
+        Key=prefix + "metadata.json",
+        Body=json.dumps(metadata).encode("utf-8"),
+    )
+
+
+def _download_index_from_s3(thread_id: str):
+    """Download and load a FAISS index from S3, or return (None, None) if absent."""
+    if _s3_client is None:
+        return None, None
+    prefix = _s3_prefix(thread_id)
+    try:
+        objects = _s3_client.list_objects_v2(Bucket=_S3_BUCKET, Prefix=prefix)
+    except Exception as exc:
+        logger.error("Failed to list S3 objects for thread %s: %s", thread_id, exc)
+        return None, None
+    if "Contents" not in objects:
+        return None, None
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        metadata = {}
+        for obj in objects["Contents"]:
+            key = obj["Key"]
+            filename = key[len(prefix):]
+            if not filename:
+                continue
+            local_path = os.path.join(tmp_dir, filename)
+            _s3_client.download_file(_S3_BUCKET, key, local_path)
+            if filename == "metadata.json":
+                with open(local_path, "r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+
+        if "metadata.json" in os.listdir(tmp_dir):
+            os.remove(os.path.join(tmp_dir, "metadata.json"))
+
+        try:
+            vector_store = FAISS.load_local(
+                tmp_dir, embeddings, allow_dangerous_deserialization=True
+            )
+        except Exception as exc:
+            logger.error("Failed to load FAISS index for thread %s: %s", thread_id, exc)
+            return None, None
+
+        retriever = vector_store.as_retriever(
+            search_type="similarity", search_kwargs={"k": 4}
+        )
+        return retriever, metadata
+
 
 def _get_retriever(thread_id: Optional[str]):
-    """Fetch the retriever for a thread if available."""
-    if thread_id and thread_id in _THREAD_RETRIEVERS:
+    """Fetch the retriever for a thread, checking the in-memory cache then S3."""
+    if not thread_id:
+        return None
+    if thread_id in _THREAD_RETRIEVERS:
         return _THREAD_RETRIEVERS[thread_id]
-    return None
+
+    retriever, metadata = _download_index_from_s3(thread_id)
+    if retriever is not None:
+        _THREAD_RETRIEVERS[thread_id] = retriever
+        _THREAD_METADATA[thread_id] = metadata
+        logger.info("Loaded FAISS index for thread %s from S3", thread_id)
+    return retriever
 
 
 def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None) -> dict:
@@ -69,18 +148,27 @@ def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None
             search_type="similarity", search_kwargs={"k": 4}
         )
 
-        _THREAD_RETRIEVERS[str(thread_id)] = retriever
-        _THREAD_METADATA[str(thread_id)] = {
+        metadata = {
             "filename": filename or os.path.basename(temp_path),
             "documents": len(docs),
             "chunks": len(chunks),
         }
 
-        return {
-            "filename": filename or os.path.basename(temp_path),
-            "documents": len(docs),
-            "chunks": len(chunks),
-        }
+        _THREAD_RETRIEVERS[str(thread_id)] = retriever
+        _THREAD_METADATA[str(thread_id)] = metadata
+
+        with tempfile.TemporaryDirectory() as save_dir:
+            vector_store.save_local(save_dir)
+            try:
+                _upload_index_to_s3(str(thread_id), save_dir, metadata)
+                logger.info(
+                    "Uploaded FAISS index for thread %s to S3 (%s chunks)",
+                    thread_id, len(chunks),
+                )
+            except Exception as exc:
+                logger.error("Failed to upload FAISS index for thread %s: %s", thread_id, exc)
+
+        return metadata
     finally:
         # The FAISS store keeps copies of the text, so the temp file is safe to remove.
         try:
@@ -234,7 +322,7 @@ def retrieve_all_threads():
 
 
 def thread_has_document(thread_id: str) -> bool:
-    return str(thread_id) in _THREAD_RETRIEVERS
+    return _get_retriever(str(thread_id)) is not None
 
 
 def thread_document_metadata(thread_id: str) -> dict:
