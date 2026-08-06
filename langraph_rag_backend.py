@@ -25,6 +25,11 @@ import boto3
 
 load_dotenv()
 
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
 # -------------------
 # 1. LLM + embeddings
 # -------------------
@@ -134,6 +139,7 @@ def ingest_pdf(file_bytes: bytes, thread_id: str, filename: Optional[str] = None
         temp_path = temp_file.name
 
     try:
+        logger.info("Ingesting PDF thread_id=%s filename=%s", thread_id, filename)
         loader = PyPDFLoader(temp_path)
         docs = loader.load()
 
@@ -235,8 +241,10 @@ def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
     Retrieve relevant information from the uploaded PDF for this chat thread.
     Always include the thread_id when calling this tool.
     """
+    logger.info("rag_tool called: thread_id=%s query=%r", thread_id, query)
     retriever = _get_retriever(thread_id)
     if retriever is None:
+        logger.info("rag_tool: no document indexed for thread_id=%s", thread_id)
         return {
             "error": "No document indexed for this chat. Upload a PDF first.",
             "query": query,
@@ -284,7 +292,15 @@ def chat_node(state: ChatState, config=None):
     )
 
     messages = [system_message, *state["messages"]]
-    response = llm_with_tools.invoke(messages, config=config)
+    logger.info("chat_node invoked: thread_id=%s message_count=%d", thread_id, len(messages))
+    try:
+        response = llm_with_tools.invoke(messages, config=config)
+    except Exception:
+        logger.exception("chat_node: LLM invocation failed for thread_id=%s", thread_id)
+        raise
+    if getattr(response, "tool_calls", None):
+        tool_names = [tc.get("name") for tc in response.tool_calls]
+        logger.info("chat_node: model requested tools=%s thread_id=%s", tool_names, thread_id)
     return {"messages": [response]}
 
 
@@ -296,6 +312,7 @@ tool_node = ToolNode(tools)
 _pool = ConnectionPool(conninfo=os.environ["DATABASE_URL"])
 checkpointer = PostgresSaver(_pool)
 checkpointer.setup()   # creates checkpoint tables on first run (idempotent)
+logger.info("PostgresSaver checkpointer initialized")
 
 # -------------------
 # 7. Graph
