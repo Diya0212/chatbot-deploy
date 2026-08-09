@@ -1,6 +1,8 @@
 # ── Stage 1: download HuggingFace model so the pod never cold-starts ──────────
 FROM python:3.12-slim AS model-cache
 
+# CPU-only torch wheel — the default PyPI wheel bundles ~2GB of unused CUDA/GPU deps
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir sentence-transformers
 
 RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
@@ -18,8 +20,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy cached model from stage 1
 COPY --from=model-cache /root/.cache/huggingface /root/.cache/huggingface
 
-# Install Python dependencies
+# Install Python dependencies (CPU-only torch first, same reason as stage 1)
 COPY requirements.txt .
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
