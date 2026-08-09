@@ -2,6 +2,8 @@
 
 Deployment files for the Multi-Utility RAG Chatbot on EKS.
 
+For running the app as a standalone Docker container (no Kubernetes required), see [DOCKER_DEPLOY.md](DOCKER_DEPLOY.md).
+
 ## Directory layout
 
 ```
