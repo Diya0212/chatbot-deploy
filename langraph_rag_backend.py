@@ -309,7 +309,7 @@ tool_node = ToolNode(tools)
 # -------------------
 # 6. Checkpointer
 # -------------------
-_pool = ConnectionPool(conninfo=os.environ["DATABASE_URL"])
+_pool = ConnectionPool(conninfo=os.environ["DATABASE_URL"], kwargs={"autocommit": True})
 checkpointer = PostgresSaver(_pool)
 checkpointer.setup()   # creates checkpoint tables on first run (idempotent)
 logger.info("PostgresSaver checkpointer initialized")
