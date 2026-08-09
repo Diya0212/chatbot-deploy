@@ -236,7 +236,7 @@ def get_stock_price(symbol: str) -> dict:
 
 
 @tool
-def rag_tool(query: str, thread_id: Optional[str] = None) -> dict:
+def rag_tool(query: str, thread_id: str) -> dict:
     """
     Retrieve relevant information from the uploaded PDF for this chat thread.
     Always include the thread_id when calling this tool.
