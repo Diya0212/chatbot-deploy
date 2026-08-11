@@ -22,3 +22,13 @@ output "github_actions_role_arn" {
   description = "IAM role ARN for GitHub Actions OIDC — set as AWS_ROLE_ARN repo secret"
   value       = aws_iam_role.github_actions.arn
 }
+
+output "alb_controller_role_arn" {
+  description = "IAM role ARN for the AWS Load Balancer Controller service account"
+  value       = aws_iam_role.alb_controller.arn
+}
+
+output "cloudwatch_observability_role_arn" {
+  description = "IAM role ARN for the amazon-cloudwatch-observability addon's Pod Identity association (created manually once the addon's real ServiceAccount name is known)"
+  value       = aws_iam_role.cloudwatch_observability.arn
+}

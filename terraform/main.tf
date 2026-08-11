@@ -120,3 +120,32 @@ resource "aws_secretsmanager_secret_version" "db_url" {
   secret_id     = aws_secretsmanager_secret.db_url.id
   secret_string = "postgresql://chatbot:${var.db_password}@${aws_db_instance.chatbot.endpoint}/chatbot"
 }
+
+resource "aws_secretsmanager_secret" "alpha_vantage_key" {
+  name = "chatbot/alpha-vantage-key"
+}
+
+# ── IAM role for amazon-cloudwatch-observability addon, via Pod Identity ──────
+# The addon's own Kubernetes ServiceAccount name isn't hardcoded here — a later
+# deployment step discovers it from the running addon and creates the
+# aws_eks_pod_identity_association via the AWS CLI at that point, referencing
+# this role's ARN.
+data "aws_iam_policy_document" "cloudwatch_observability_assume_role" {
+  statement {
+    actions = ["sts:AssumeRole", "sts:TagSession"]
+    principals {
+      type        = "Service"
+      identifiers = ["pods.eks.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "cloudwatch_observability" {
+  name               = "chatbot-cloudwatch-observability-role"
+  assume_role_policy = data.aws_iam_policy_document.cloudwatch_observability_assume_role.json
+}
+
+resource "aws_iam_role_policy_attachment" "cloudwatch_observability" {
+  role       = aws_iam_role.cloudwatch_observability.name
+  policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
+}
