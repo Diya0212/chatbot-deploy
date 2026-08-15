@@ -1,34 +1,39 @@
-output "irsa_role_arn" {
-  description = "Paste this into k8s/serviceaccount.yaml → eks.amazonaws.com/role-arn"
-  value       = aws_iam_role.chatbot_irsa.arn
+output "cluster_name" {
+  description = "EKS cluster name — use with `aws eks update-kubeconfig --name <this>`"
+  value       = module.eks.cluster_name
 }
 
-output "rds_endpoint" {
-  description = "RDS endpoint (host:port)"
-  value       = aws_db_instance.chatbot.endpoint
+output "cluster_endpoint" {
+  description = "EKS cluster API server endpoint"
+  value       = module.eks.cluster_endpoint
 }
 
-output "s3_bucket_name" {
-  description = "S3 bucket for FAISS index persistence — set as S3_BUCKET_NAME env var on the deployment"
-  value       = aws_s3_bucket.faiss_indexes.id
+output "cluster_oidc_provider_arn" {
+  description = "OIDC provider ARN for the cluster — needed to build IRSA trust policies manually"
+  value       = module.eks.oidc_provider_arn
 }
 
-output "ecr_repository_url" {
-  description = "ECR repo URL — set as image in k8s/deployment.yaml"
-  value       = aws_ecr_repository.chatbot.repository_url
+output "cluster_oidc_provider" {
+  description = "OIDC provider (issuer without scheme) — needed to build IRSA trust policy conditions manually"
+  value       = module.eks.oidc_provider
 }
 
-output "github_actions_role_arn" {
-  description = "IAM role ARN for GitHub Actions OIDC — set as AWS_ROLE_ARN repo secret"
-  value       = aws_iam_role.github_actions.arn
+output "node_security_group_id" {
+  description = "Security group ID of the EKS worker nodes — needed to allow RDS/other ingress manually"
+  value       = module.eks.node_security_group_id
 }
 
-output "alb_controller_role_arn" {
-  description = "IAM role ARN for the AWS Load Balancer Controller service account"
-  value       = aws_iam_role.alb_controller.arn
+output "vpc_id" {
+  description = "VPC ID — needed for manually creating RDS, security groups, etc."
+  value       = module.vpc.vpc_id
 }
 
-output "cloudwatch_observability_role_arn" {
-  description = "IAM role ARN for the amazon-cloudwatch-observability addon's Pod Identity association (created manually once the addon's real ServiceAccount name is known)"
-  value       = aws_iam_role.cloudwatch_observability.arn
+output "private_subnet_ids" {
+  description = "Private subnet IDs — needed for manually creating an RDS subnet group"
+  value       = module.vpc.private_subnets
+}
+
+output "public_subnet_ids" {
+  description = "Public subnet IDs"
+  value       = module.vpc.public_subnets
 }
