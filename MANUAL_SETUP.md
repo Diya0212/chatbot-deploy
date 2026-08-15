@@ -361,33 +361,27 @@ aws iam attach-role-policy \
 echo "CW_ROLE_ARN=$CW_ROLE_ARN"
 ```
 
-Now find the addon's real Kubernetes ServiceAccount (its name isn't
-guessable in advance) and create the Pod Identity association:
-
-```bash
-kubectl get pods -A -l app.kubernetes.io/name=cloudwatch-agent \
-  -o jsonpath='{range .items[*]}{.metadata.namespace}{" "}{.spec.serviceAccountName}{"\n"}{end}' | sort -u
-```
-
-This should print something like `amazon-cloudwatch cloudwatch-agent`. If it
-prints nothing, list pods in the `amazon-cloudwatch` namespace instead
-(`kubectl get pods -n amazon-cloudwatch`) and read `serviceAccountName` off
-any pod there. Then, using the real `<namespace>` and `<service-account>`:
+Confirmed on this cluster: both the `cloudwatch-agent` and `fluent-bit`
+DaemonSet pods run as ServiceAccount **`cloudwatch-agent`** in namespace
+**`amazon-cloudwatch`** (verified via `kubectl get pods -n amazon-cloudwatch
+-o jsonpath='{range .items[*]}{.metadata.name}{" -> "}{.spec.serviceAccountName}{"\n"}{end}'`
+right after the cluster came up). Create the Pod Identity association:
 
 ```bash
 aws eks create-pod-identity-association \
   --cluster-name $CLUSTER_NAME \
-  --namespace <namespace> \
-  --service-account <service-account> \
+  --namespace amazon-cloudwatch \
+  --service-account cloudwatch-agent \
   --role-arn "$CW_ROLE_ARN"
 
-kubectl delete pods -n <namespace> -l app.kubernetes.io/name=cloudwatch-agent
+kubectl delete pods -n amazon-cloudwatch -l app.kubernetes.io/name=cloudwatch-agent
+kubectl delete pods -n amazon-cloudwatch -l k8s-app=fluent-bit
 ```
 
-(The last command restarts the addon's pods so they pick up the new identity
-— if the label selector doesn't match anything, use
-`kubectl rollout restart daemonset <name> -n <namespace>` instead, using
-whatever daemonset name `kubectl get daemonset -n <namespace>` shows.)
+(Both label selectors are needed — `cloudwatch-agent` and `fluent-bit` are
+separate DaemonSets under different labels, but both run as the
+`cloudwatch-agent` ServiceAccount and both need to restart to pick up the
+new Pod Identity association.)
 
 ---
 
